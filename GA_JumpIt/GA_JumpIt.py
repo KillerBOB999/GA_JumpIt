@@ -2,11 +2,12 @@
 
 import sys
 import random as rng
-import copy
+
+rng.seed(999)
 
 global DP_cost, DP_path, DP_min_cost
 global GA_cost, GA_path, GA_min_cost, GA_minCostID 
-global populationSize, population, fitness, mutationRate, generationCount
+global populationSize, population, fitness, mutationRate, crossRate, generationCount
 
 GA_cost = dict()
 GA_path = []
@@ -23,13 +24,14 @@ def checkForDouble0s(selectedPopulation, chromosomeID, precedingGeneID):
         return False
 
 def initialize(numOfGenes):
-    global GA_cost, GA_path, populationSize, population, fitness, mutationRate
+    global GA_cost, GA_path, populationSize, population, fitness, mutationRate, crossRate
     GA_cost = dict()
     GA_path = []
-    populationSize = numOfGenes
+    populationSize = 3 * numOfGenes
     population = [[]]
     fitness = dict()
-    mutationRate = 0.25
+    mutationRate = 0.01
+    crossRate = 0.85
     GA_min_cost = sys.maxsize
     GA_minCostID = int()
     generationCount = 1
@@ -49,7 +51,7 @@ def initialize(numOfGenes):
 
 def mutate(newPopulation, chromosomeID):
     for i in range(1, len(newPopulation[chromosomeID]) - 1):
-        if rng.random() >= mutationRate:
+        if rng.random() <= mutationRate:
             if newPopulation[chromosomeID][i] == 0:
                 newPopulation[chromosomeID][i] = 1
             else:
@@ -58,17 +60,36 @@ def mutate(newPopulation, chromosomeID):
                     newPopulation[chromosomeID][i] = 1
     return
 
-def cross(newPopulation, parent1ChromosomeID, parent2ChromosomeID, targetChromosomeID):
-    if newPopulation[0] == []:
-        newPopulation.pop()
-    newPopulation[targetChromosomeID] = population[parent1ChromosomeID]
-    selectedCrossPoint = rng.randint(1, len(population[parent1ChromosomeID]) - 2)
-    for i in range(selectedCrossPoint, len(population[parent2ChromosomeID])):
-        newPopulation[targetChromosomeID][i] = copy.deepcopy(population[parent2ChromosomeID][i])
-        if checkForDouble0s(newPopulation, targetChromosomeID, i-1):
-            newPopulation[targetChromosomeID][i] = 1
-    if rng.random() <= mutationRate:
-        mutate(newPopulation, targetChromosomeID)
+def testCanCross(attemptedCrossPoint, parent1, parent2, parent1ChromosomeID, parent2ChromosomeID):
+    global population
+    child1 = []
+    child2 = []
+    for i in  range(0, len(parent1)):
+        if i < attemptedCrossPoint:
+            child1.append(parent1[i])
+            child2.append(parent2[i])
+        else:
+            child1.append(parent2[i])
+            child2.append(parent1[i])
+    for i in range(0, len(child1) - 1):
+        if (child1[i] == 0 and child1[i+1] == 0) or (child2[i] == 0 and child2[i+1] == 0):
+            return False
+    population[parent1ChromosomeID] = child1
+    population[parent2ChromosomeID] = child2
+    return True
+
+def cross(newPopulation, parent1ChromosomeID, parent2ChromosomeID, targetChromosomeIDs):
+    global crossRate
+    newPopulation[targetChromosomeIDs[0]] = population[parent1ChromosomeID]
+    newPopulation[targetChromosomeIDs[1]] = population[parent2ChromosomeID]
+    rand = rng.random()
+    if rand <= crossRate:
+        canCross = False
+        while not canCross:
+            selectedCrossPoint = rng.randint(1, len(population[parent1ChromosomeID]) - 2)
+            canCross = testCanCross(selectedCrossPoint, population[parent1ChromosomeID], population[parent2ChromosomeID], parent1ChromosomeID, parent2ChromosomeID)
+    mutate(newPopulation, targetChromosomeIDs[0])
+    mutate(newPopulation, targetChromosomeIDs[1])
     return
 
 def calcFitness(chromosomeID):
@@ -89,9 +110,17 @@ def populate():
     global populationSize, generationCount, GA_minCostID, population, fitness
     generationCount += 1
     leastFitID = (0, 0)
-    for chromosomeID in GA_cost:
-        if GA_cost[chromosomeID] > leastFitID[1]:
-            leastFitID = (chromosomeID, GA_cost[chromosomeID])
+    leastFitIDs = []
+    orderedCost = [GA_cost[k] for k in GA_cost]
+    orderedCost.sort()
+    numOfLosers = int(len(orderedCost) / 2)
+    if numOfLosers % 2 != 0:
+        numOfLosers += 1
+    for orderedCostIndex in range(numOfLosers, len(orderedCost)):
+        for unorderedCostIndex in GA_cost:
+            if GA_cost[unorderedCostIndex] == orderedCost[orderedCostIndex]:
+                leastFitIDs.append(unorderedCostIndex)
+    leastFitIDs.sort()
     parents = []
     chanceOfMating = dict()
     totalFitness = 0
@@ -104,21 +133,22 @@ def populate():
             first = False
         else:
             chanceOfMating.update({index : (chanceOfMating[index - 1][1], (fitness[index] / totalFitness) + chanceOfMating[index - 1][1])})
-    while len(parents) != 2:
-        rand = rng.random()
-        for key in chanceOfMating:
-            if rand >= chanceOfMating[key][0] and rand <= chanceOfMating[key][1]:
-                parents.append(key)
-                if len(parents) == 2:
-                    cross(population, parents[0], parents[1], leastFitID[0])
+    for i in range(0, len(leastFitIDs), 2):
+        while len(parents) != 2:
+            rand = rng.random()
+            for key in chanceOfMating:
+                if rand >= chanceOfMating[key][0] and rand <= chanceOfMating[key][1]:
+                    parents.append(key)
+                    if len(parents) == 2:
+                        cross(population, parents[0], parents[1], (leastFitIDs[i], leastFitIDs[i+1]))
     return
 
 def GA_JumpIt(board):
     initialize(len(board))
-    global GA_min_cost, DP_min_cost, GA_cost, GA_minCostID, generationCount
+    global GA_min_cost, DP_min_cost, GA_cost, GA_minCostID, generationCount, populationSize
     GA_min_cost = sys.maxsize
     forceDo = True
-    while (forceDo or GA_min_cost > DP_min_cost):# and generationCount < 2000:
+    while (forceDo or GA_min_cost > DP_min_cost) and generationCount < 15 * populationSize:
         if forceDo != True:
                 populate()
         for chromosomeID in range(0, len(population)):
@@ -184,6 +214,7 @@ def fileHandler(fileName):
         DP_path = DP_cost[:]
         DP_min_cost = DP_JumpIt(lyst)
         print()
+        print("=====================================================================================")
         print("game board:", lyst)
         print("___________________________")
         print("DP Solution")
@@ -205,12 +236,13 @@ def fileHandler(fileName):
         displayPath(lyst, True)
         print("___________________________")
     print()
+    print("=====================================================================================")
     print("GA Overall Accuracy: ", (numCorrect / total) * 100, end = "%")
     print()
     return
 
 def main():
-    fileHandler("input1.txt")
+    fileHandler("input2.txt")
     return
 
 main()
